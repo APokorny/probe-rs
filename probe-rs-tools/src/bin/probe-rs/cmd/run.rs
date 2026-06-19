@@ -9,7 +9,7 @@ use crate::rpc::utils::run_loop::VectorCatchConfig;
 use crate::FormatOptions;
 use crate::util::cli::{self, parse_metadata, rtt_client};
 use crate::util::common_options::{BinaryDownloadOptions, ProbeOptions};
-use crate::util::rtt::ChannelMode;
+use crate::util::rtt::{ChannelMode, DataFormat};
 
 use anyhow::{Context, anyhow};
 use libtest_mimic::{Arguments, FormatSetting};
@@ -198,6 +198,24 @@ pub(crate) struct MonitoringOptions {
     /// By default, probe-rs will select the first available channel. This option can override that behavior.
     #[clap(long, default_value = "0", help_heading = "LOG CONFIGURATION / RTT")]
     pub(crate) rtt_down_channel: u32,
+
+    /// RTT data format to use for channels.
+    ///
+    /// Controls how RTT data is interpreted and displayed:
+    /// - string: UTF-8 text (default), replaces invalid bytes with �
+    /// - binary: Raw binary data, output as pure binary bytes to stdout/file
+    /// - defmt: Structured logging protocol (requires defmt metadata in ELF)
+    ///
+    /// Binary mode outputs raw bytes without any encoding, making it suitable
+    /// for piping to other tools or capturing binary streams.
+    ///
+    /// Note: defmt channels (named "defmt") are automatically detected and use defmt format regardless of this setting.
+    #[clap(
+        long,
+        default_value = "string",
+        help_heading = "LOG CONFIGURATION / RTT"
+    )]
+    pub(crate) rtt_data_format: DataFormat,
 
     /// List RTT channels and exit.
     #[clap(

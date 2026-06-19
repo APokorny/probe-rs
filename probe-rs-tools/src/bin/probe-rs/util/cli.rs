@@ -50,7 +50,7 @@ use crate::{
         common_options::{BinaryDownloadOptions, ProbeOptions},
         flash::CliProgressBars,
         logging,
-        rtt::{DefmtProcessor, DefmtState, RttChannelConfig, RttDecoder, client::RttClient},
+        rtt::{DataFormat, DefmtProcessor, DefmtState, ProcessedRttData, RttChannelConfig, RttDecoder, client::RttClient},
     },
 };
 
@@ -372,6 +372,7 @@ pub async fn rtt_client(
         channel_processors: vec![],
         defmt_data: meta.defmt_data.clone(),
         log_format: monitor_options.log_format.clone(),
+        data_format_preference: Some(monitor_options.rtt_data_format),
     })
 }
 
@@ -1123,6 +1124,7 @@ pub struct CliRttClient {
     show_location: bool,
     timestamp_offset: Option<UtcOffset>,
     defmt_data: Option<DefmtState>,
+    data_format_preference: Option<DataFormat>,
 }
 
 impl CliRttClient {
@@ -1136,27 +1138,60 @@ impl CliRttClient {
             return;
         }
 
-        // Apply our heuristics based on channel names.
+        // Apply our heuristics based on channel names and user preferences.
         for channel in up_channels.iter() {
-            let decoder = if channel.name == "defmt" {
-                if let Some(defmt_data) = self.defmt_data.clone() {
-                    RttDecoder::Defmt {
-                        processor: DefmtProcessor::new(
-                            defmt_data,
-                            self.show_timestamps,
-                            self.show_location,
-                            self.log_format.as_deref(),
-                        ),
+            let decoder = if let Some(user_format) = self.data_format_preference {
+                // User explicitly specified a format via CLI flag
+                match user_format {
+                    DataFormat::String => RttDecoder::String {
+                        timestamp_offset: self.timestamp_offset,
+                        last_line_done: false,
+                        show_timestamps: self.show_timestamps,
+                    },
+                    DataFormat::BinaryLE => RttDecoder::BinaryLE,
+                    DataFormat::Defmt => {
+                        if let Some(defmt_data) = self.defmt_data.clone() {
+                            RttDecoder::Defmt {
+                                processor: DefmtProcessor::new(
+                                    defmt_data,
+                                    self.show_timestamps,
+                                    self.show_location,
+                                    self.log_format.as_deref(),
+                                ),
+                            }
+                        } else {
+                            // User requested defmt but no defmt metadata available
+                            tracing::warn!(
+                                "defmt format requested but no defmt metadata found in ELF file. \
+                                Falling back to binary format for channel '{}'",
+                                channel.name
+                            );
+                            RttDecoder::BinaryLE
+                        }
                     }
-                } else {
-                    // Not much we can do. Don't silently eat the data.
-                    RttDecoder::BinaryLE
                 }
             } else {
-                RttDecoder::String {
-                    timestamp_offset: self.timestamp_offset,
-                    last_line_done: false,
-                    show_timestamps: self.show_timestamps,
+                // No user preference, use automatic detection based on channel name
+                if channel.name == "defmt" {
+                    if let Some(defmt_data) = self.defmt_data.clone() {
+                        RttDecoder::Defmt {
+                            processor: DefmtProcessor::new(
+                                defmt_data,
+                                self.show_timestamps,
+                                self.show_location,
+                                self.log_format.as_deref(),
+                            ),
+                        }
+                    } else {
+                        // Not much we can do. Don't silently eat the data.
+                        RttDecoder::BinaryLE
+                    }
+                } else {
+                    RttDecoder::String {
+                        timestamp_offset: self.timestamp_offset,
+                        last_line_done: false,
+                        show_timestamps: self.show_timestamps,
+                    }
                 }
             };
 
@@ -1265,13 +1300,32 @@ impl Channel {
         shared_writer: &impl AsyncFn(&str),
         copy_to: Option<&mut tokio::fs::File>,
     ) {
+        use ProcessedRttData;
+
         if let Some(data) = self.decoder.process(bytes).ok().flatten() {
-            let data = data.to_string();
-            let message = format!("{}{}", self.printer_prefix, data);
-            shared_writer(&message).await;
-            if let Some(copy_to) = copy_to {
-                // Silently discarding output file errors
-                _ = copy_to.write_all(data.as_bytes()).await;
+            match data {
+                ProcessedRttData::String(string_data) => {
+                    let message = format!("{}{}", self.printer_prefix, string_data);
+                    shared_writer(&message).await;
+                    if let Some(copy_to) = copy_to {
+                        // Silently discarding output file errors
+                        _ = copy_to.write_all(string_data.as_bytes()).await;
+                    }
+                }
+                ProcessedRttData::Binary(binary_data) => {
+                    // For binary data, write raw bytes directly to stdout and file
+                    // without any string conversion or hex encoding.
+                    use std::io::Write;
+                    let mut stdout = std::io::stdout();
+                    // Silently discarding stdout errors
+                    _ = stdout.write_all(binary_data);
+                    _ = stdout.flush();
+                    
+                    if let Some(copy_to) = copy_to {
+                        // Silently discarding output file errors
+                        _ = copy_to.write_all(binary_data).await;
+                    }
+                }
             }
         }
     }

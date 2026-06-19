@@ -15,7 +15,7 @@ fn default_show_timestamps() -> bool {
 }
 
 #[derive(
-    Debug, Copy, Clone, PartialEq, Eq, Default, docsplay::Display, Serialize, Deserialize, Schema,
+    Debug, Copy, Clone, PartialEq, Eq, Default, docsplay::Display, Serialize, Deserialize, Schema, clap::ValueEnum,
 )]
 pub enum DataFormat {
     #[default]

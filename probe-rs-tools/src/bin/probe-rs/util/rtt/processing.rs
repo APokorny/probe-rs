@@ -140,26 +140,22 @@ impl Display for ProcessedRttData<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProcessedRttData::String(s) => f.write_str(s),
-            ProcessedRttData::Binary(data) => {
-                for element in *data {
-                    // Width of 4 allows 0xFF to be printed.
-                    write!(f, "{element:#04x}").expect("Writing to String cannot fail");
-                }
-                Ok(())
+            ProcessedRttData::Binary(_data) => {
+                // Binary data cannot be displayed as text through a formatter.
+                // It should be written directly to the output stream as raw bytes.
+                // This Display implementation should not be called for binary data.
+                panic!("Cannot display binary data as text. Use the raw bytes directly.");
             }
         }
     }
 }
 
 pub trait RttDataHandler {
-    async fn on_binary_data(&mut self, data: &[u8]) -> Result<(), Error> {
-        let mut formatted_data = String::with_capacity(data.len() * 4);
-        for element in data {
-            // Width of 4 allows 0xFF to be printed.
-            write!(&mut formatted_data, "{element:#04x}").expect("Writing to String cannot fail");
-        }
-        self.on_string_data(formatted_data).await
-    }
+    /// Handle binary data as raw bytes.
+    /// 
+    /// Default implementation passes the raw bytes through as-is without any formatting.
+    /// This allows for pure binary streaming to other tools.
+    async fn on_binary_data(&mut self, data: &[u8]) -> Result<(), Error>;
 
     async fn on_string_data(&mut self, data: String) -> Result<(), Error>;
 }
